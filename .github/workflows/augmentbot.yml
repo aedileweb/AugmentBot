@@ -77,7 +77,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.issue.number,
-                body: '🤖 **AugmentBot activated!**\n\nI\'m now monitoring this PR for Codex reviews. I\'ll automatically:\n- Detect Codex review comments\n- Apply fixes using Auggie CLI\n- Request re-reviews from @codex\n- Auto-merge when approved ✅'
+                body: '🤖 **AugmentBot activated!**\n\nI\'m now monitoring this PR for Codex reviews. I\'ll automatically:\n- Detect Codex review comments\n- Apply fixes using Augment Agent\n- Request re-reviews from Codex\n- Auto-merge when approved ✅'
               });
               
               await github.rest.issues.addLabels({
@@ -430,14 +430,6 @@ jobs:
         run: |
           echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
           echo "${{ steps.issues.outputs.issues }}"
-
-      - name: Debug secret format
-        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
-        run: |
-          echo "Secret length: ${#AUGMENT_SESSION_AUTH}"
-          echo "First 50 chars: ${AUGMENT_SESSION_AUTH:0:50}"
-        env:
-          AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
 
       - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
