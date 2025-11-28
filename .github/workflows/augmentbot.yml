@@ -102,10 +102,21 @@ jobs:
               repo: context.repo.repo,
               issue_number: ${{ steps.pr.outputs.number }}
             });
-            
+
             const isMonitoring = labels.some(label => label.name === 'augmentbot:monitoring');
             core.setOutput('enabled', isMonitoring);
             return isMonitoring;
+
+      - name: Check for unresolved historical issues
+        id: historical
+        if: steps.monitoring.outputs.enabled == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const script = require('./.github/workflows/check-historical-issues.js');
+            return await script({ github, context, core });
+        env:
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer
       
       - name: Detect Codex comment
         id: codex
@@ -154,44 +165,63 @@ jobs:
 
       - name: Parse Codex issues
         id: issues
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        if: |
+          (steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true') ||
+          (steps.historical.outputs.has_unresolved == 'true')
         uses: actions/github-script@v7
         with:
           script: |
-            const commentBody = `${{ steps.codex.outputs.comment_body }}`;
+            // Use current comment if from Codex, otherwise use historical issues
+            let issuesText = '';
+            let issueCount = 0;
 
-            // Extract issues from Codex comment
-            // Look for patterns like "- Issue: ...", "Problem: ...", etc.
-            const issuePatterns = [
-              /[-*]\s*(.+?)(?=\n[-*]|\n\n|$)/gs,
-              /(?:issue|problem|error|warning):\s*(.+?)(?=\n|$)/gi
-            ];
+            if ('${{ steps.codex.outputs.is_codex }}' === 'true') {
+              // Current comment is from Codex
+              const commentBody = `${{ steps.codex.outputs.comment_body }}`;
 
-            let issues = [];
-            for (const pattern of issuePatterns) {
-              const matches = [...commentBody.matchAll(pattern)];
-              issues.push(...matches.map(m => m[1].trim()));
+              const issuePatterns = [
+                /[-*]\s*(.+?)(?=\n[-*]|\n\n|$)/gs,
+                /(?:issue|problem|error|warning):\s*(.+?)(?=\n|$)/gi
+              ];
+
+              let issues = [];
+              for (const pattern of issuePatterns) {
+                const matches = [...commentBody.matchAll(pattern)];
+                issues.push(...matches.map(m => m[1].trim()));
+              }
+
+              if (issues.length === 0) {
+                issues = [commentBody];
+              }
+
+              issuesText = issues.join('\n- ');
+              issueCount = issues.length;
+            } else {
+              // Use historical unresolved issues
+              issuesText = `${{ steps.historical.outputs.unresolved_issues }}`;
+              issueCount = parseInt('${{ steps.historical.outputs.unresolved_count }}') || 0;
             }
 
-            // If no structured issues found, use the whole comment
-            if (issues.length === 0) {
-              issues = [commentBody];
-            }
-
-            const issuesText = issues.join('\n- ');
             core.setOutput('issues', issuesText);
-            core.setOutput('count', issues.length);
+            core.setOutput('count', issueCount);
 
-            return { issues, count: issues.length };
+            // Check for loops
+            const hasLoops = '${{ steps.historical.outputs.has_loops }}' === 'true';
+            if (hasLoops) {
+              core.warning('⚠️ LOOP DETECTED - Same issues appearing multiple times!');
+              core.setOutput('has_loops', true);
+            }
+
+            return { issues: issuesText, count: issueCount, hasLoops };
 
       - name: Checkout PR branch
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        if: steps.issues.outputs.count > 0
         run: |
           git fetch origin ${{ steps.pr.outputs.head_ref }}
           git checkout ${{ steps.pr.outputs.head_ref }}
 
       - name: Apply fixes with Auggie CLI
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         env:
           AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
         run: |
@@ -210,8 +240,37 @@ jobs:
           echo "✅ Auggie completed"
           cat auggie-output.txt
 
+      - name: Alert on loop detection
+        if: steps.issues.outputs.has_loops == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const loopDetails = JSON.parse('${{ steps.historical.outputs.loop_details }}');
+
+            let message = '🔄 **LOOP DETECTED**\n\n';
+            message += 'AugmentBot has detected that the following issues keep reappearing:\n\n';
+
+            loopDetails.loops.forEach(loop => {
+              message += `### ${loop.issue}\n`;
+              message += `- **Occurrences**: ${loop.count} times\n`;
+              message += `- **Action**: Stopping automated fixes to prevent infinite loop\n\n`;
+            });
+
+            message += '**Next Steps**:\n';
+            message += '1. Review the commit history to understand why fixes aren\'t sticking\n';
+            message += '2. Consider a different approach to resolve these issues\n';
+            message += '3. Manual intervention may be required\n\n';
+            message += '⚠️ **Automated fixes paused** - Please review and fix manually.';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              body: message
+            });
+
       - name: Commit and push fixes
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         run: |
           git config user.name "AugmentBot"
           git config user.email "augmentbot@users.noreply.github.com"
@@ -233,7 +292,7 @@ jobs:
           fi
 
       - name: Request re-review from Codex
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: actions/github-script@v7
         with:
           script: |
