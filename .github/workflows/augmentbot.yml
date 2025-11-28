@@ -153,14 +153,27 @@ jobs:
             });
 
             const codexUsernames = (process.env.CODEX_USERNAMES || 'codex,codex-bot,codex-reviewer').split(',');
+
+            // Approval patterns - must indicate overall approval, not just contain emoji
             const approvalPatterns = [
               /no major issues/i,
+              /didn't find any major issues/i,
               /looks good/i,
               /lgtm/i,
               /approved/i,
-              /👍/,
-              /✅.*ready to merge/i
+              /ready to merge/i,
+              /✅.*approved/i,
+              /✅.*no major issues/i
             ];
+
+            // Check for standalone thumbs up (not in "React with 👍" context)
+            const hasStandaloneThumbsUp = (text) => {
+              if (!text.includes('👍')) return false;
+              // Exclude if it's in "React with" or "Useful?" context
+              if (/react with.*👍/i.test(text)) return false;
+              if (/useful\?.*👍/i.test(text)) return false;
+              return true;
+            };
 
             // Find all Codex comments (issue comments, review comments, and reviews)
             const codexComments = [
@@ -182,7 +195,13 @@ jobs:
 
             // Get the most recent Codex comment
             const latestCodexComment = codexComments[codexComments.length - 1];
-            const isApproved = approvalPatterns.some(p => p.test(latestCodexComment.body));
+            core.info(`Latest Codex comment from: ${latestCodexComment.user.login}`);
+            core.info(`Latest Codex comment body preview: ${latestCodexComment.body.substring(0, 150)}...`);
+
+            // Check for approval
+            const hasApprovalKeywords = approvalPatterns.some(p => p.test(latestCodexComment.body));
+            const hasThumbsUp = hasStandaloneThumbsUp(latestCodexComment.body);
+            const isApproved = hasApprovalKeywords || hasThumbsUp;
 
             if (isApproved) {
               core.info('✅ Latest Codex comment is an approval');
