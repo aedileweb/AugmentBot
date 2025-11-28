@@ -573,11 +573,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Sanitize issues text to prevent shell escaping errors
+            const issuesText = `${{ steps.issues.outputs.issues }}`.replace(/[`'"]/g, '');
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ steps.pr.outputs.number }},
-              body: '🔄 **Fixes applied!**\n\nI\'ve addressed the issues identified in the review. @codex please re-review when ready.\n\n**Issues fixed:**\n${{ steps.issues.outputs.issues }}'
+              body: `🔄 **Fixes applied!**\n\nI've addressed the issues identified in the review. @codex please re-review when ready.\n\n**Issues fixed:**\n${issuesText}`
             });
 
             // Update label
