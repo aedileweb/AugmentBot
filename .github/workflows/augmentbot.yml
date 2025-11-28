@@ -259,7 +259,7 @@ jobs:
 
             return { unresolvedIssues, count: unresolvedIssues.length, isApproved, loops: loopDetection };
         env:
-          CODEX_USERNAMES: codex,codex-bot,codex-reviewer
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector
       
       - name: Detect Codex comment
         id: codex
@@ -304,7 +304,7 @@ jobs:
             
             return { isCodex, isApproval, commentBody };
         env:
-          CODEX_USERNAMES: codex,codex-bot,codex-reviewer
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector
 
       - name: Parse Codex issues
         id: issues
