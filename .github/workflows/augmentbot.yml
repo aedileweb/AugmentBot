@@ -336,8 +336,13 @@ jobs:
                   formatted += ` (line ${ctx.line})`;
                 }
               }
-              // Include relevant excerpt from comment body
-              const bodyLines = ctx.body.split('\n').slice(0, 5).join('\n');
+              // Include relevant excerpt from comment body (sanitized)
+              const bodyLines = ctx.body
+                .split('\n')
+                .slice(0, 5)
+                .map(line => line.replace(/[`'"]/g, ''))  // Remove quotes and backticks
+                .join(' ')  // Join with spaces instead of newlines
+                .substring(0, 200);  // Limit length
               formatted += `\n  Context: ${bodyLines}`;
               return formatted;
             }).join('\n\n');
@@ -345,7 +350,8 @@ jobs:
             core.setOutput('has_unresolved', unresolvedIssues.length > 0);
             core.setOutput('unresolved_count', unresolvedIssues.length);
             core.setOutput('unresolved_issues', unresolvedIssues.join('\n- '));
-            core.setOutput('issues_with_context', formattedIssues);
+            // Use base64 encoding to safely pass complex text with special characters
+            core.setOutput('issues_with_context', Buffer.from(formattedIssues).toString('base64'));
             core.setOutput('has_loops', loopDetection.hasLoops);
             core.setOutput('loop_details', JSON.stringify(loopDetection.loops));
 
@@ -461,6 +467,15 @@ jobs:
           echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
           echo "${{ steps.issues.outputs.issues }}"
 
+      - name: Decode issues context
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
+        id: decode_issues
+        run: |
+          DECODED=$(echo "${{ steps.historical.outputs.issues_with_context }}" | base64 -d)
+          echo "decoded_issues<<EOF" >> $GITHUB_OUTPUT
+          echo "$DECODED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: augmentcode/augment-agent@main
@@ -475,7 +490,7 @@ jobs:
 
             Issues to fix:
 
-            ${{ steps.historical.outputs.issues_with_context }}
+            ${{ steps.decode_issues.outputs.decoded_issues }}
 
             For each issue:
             1. Go to the specified file and line number
