@@ -1,0 +1,298 @@
+name: AugmentBot - Automated Code Review Response
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  process-codex-review:
+    # Only run on PRs, not issues
+    if: github.event.issue.pull_request || github.event.pull_request
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      
+      - name: Install Auggie CLI
+        run: npm install -g @augmentcode/auggie
+      
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let pr;
+            if (context.payload.issue) {
+              // From issue_comment event
+              const prData = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number
+              });
+              pr = prData.data;
+            } else {
+              // From pull_request or pull_request_review event
+              pr = context.payload.pull_request;
+            }
+            
+            core.setOutput('number', pr.number);
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('head_sha', pr.head.sha);
+            return pr;
+      
+      - name: Check for takeover command
+        id: takeover
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment;
+            if (!comment) return false;
+            
+            const body = comment.body.toLowerCase();
+            const isTakeover = body.includes('@augment') && body.includes('takeover');
+            core.setOutput('enabled', isTakeover);
+            
+            if (isTakeover) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: '🤖 **AugmentBot activated!**\n\nI\'m now monitoring this PR for Codex reviews. I\'ll automatically:\n- Detect Codex review comments\n- Apply fixes using Auggie CLI\n- Request re-reviews from @codex\n- Auto-merge when approved ✅'
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ['augmentbot:monitoring']
+              });
+            }
+            return isTakeover;
+      
+      - name: Check if monitoring is enabled
+        id: monitoring
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }}
+            });
+            
+            const isMonitoring = labels.some(label => label.name === 'augmentbot:monitoring');
+            core.setOutput('enabled', isMonitoring);
+            return isMonitoring;
+      
+      - name: Detect Codex comment
+        id: codex
+        if: steps.monitoring.outputs.enabled == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment;
+            const review = context.payload.review;
+            
+            // Check if this is a Codex comment
+            const codexUsernames = process.env.CODEX_USERNAMES.split(',');
+            let isCodex = false;
+            let commentBody = '';
+            
+            if (comment) {
+              isCodex = codexUsernames.some(username => 
+                comment.user.login.toLowerCase().includes(username.toLowerCase())
+              );
+              commentBody = comment.body;
+            } else if (review) {
+              isCodex = codexUsernames.some(username => 
+                review.user.login.toLowerCase().includes(username.toLowerCase())
+              );
+              commentBody = review.body;
+            }
+            
+            core.setOutput('is_codex', isCodex);
+            core.setOutput('comment_body', commentBody);
+            
+            // Check for approval
+            const approvalPatterns = [
+              /no major issues/i,
+              /looks good/i,
+              /lgtm/i,
+              /👍/,
+              /✅/
+            ];
+            
+            const isApproval = approvalPatterns.some(pattern => pattern.test(commentBody));
+            core.setOutput('is_approval', isApproval);
+            
+            return { isCodex, isApproval, commentBody };
+        env:
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer
+
+      - name: Parse Codex issues
+        id: issues
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentBody = `${{ steps.codex.outputs.comment_body }}`;
+
+            // Extract issues from Codex comment
+            // Look for patterns like "- Issue: ...", "Problem: ...", etc.
+            const issuePatterns = [
+              /[-*]\s*(.+?)(?=\n[-*]|\n\n|$)/gs,
+              /(?:issue|problem|error|warning):\s*(.+?)(?=\n|$)/gi
+            ];
+
+            let issues = [];
+            for (const pattern of issuePatterns) {
+              const matches = [...commentBody.matchAll(pattern)];
+              issues.push(...matches.map(m => m[1].trim()));
+            }
+
+            // If no structured issues found, use the whole comment
+            if (issues.length === 0) {
+              issues = [commentBody];
+            }
+
+            const issuesText = issues.join('\n- ');
+            core.setOutput('issues', issuesText);
+            core.setOutput('count', issues.length);
+
+            return { issues, count: issues.length };
+
+      - name: Checkout PR branch
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        run: |
+          git fetch origin ${{ steps.pr.outputs.head_ref }}
+          git checkout ${{ steps.pr.outputs.head_ref }}
+
+      - name: Apply fixes with Auggie CLI
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        env:
+          AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
+        run: |
+          echo "🔧 Applying fixes for Codex review issues..."
+
+          # Create prompt for Auggie
+          PROMPT="Fix the following code review issues identified by Codex:
+
+          ${{ steps.issues.outputs.issues }}
+
+          Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues."
+
+          # Run Auggie in automation mode
+          auggie --print --quiet "$PROMPT" > auggie-output.txt
+
+          echo "✅ Auggie completed"
+          cat auggie-output.txt
+
+      - name: Commit and push fixes
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        run: |
+          git config user.name "AugmentBot"
+          git config user.email "augmentbot@users.noreply.github.com"
+
+          # Check if there are changes
+          if [[ -n $(git status -s) ]]; then
+            git add .
+            git commit -m "fix: Apply Codex review fixes
+
+          Automated fixes applied by AugmentBot in response to Codex review.
+
+          Issues addressed:
+          ${{ steps.issues.outputs.issues }}"
+
+            git push origin ${{ steps.pr.outputs.head_ref }}
+            echo "✅ Changes committed and pushed"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
+
+      - name: Request re-review from Codex
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              body: '🔄 **Fixes applied!**\n\nI\'ve addressed the issues identified in the review. @codex please re-review when ready.\n\n**Issues fixed:**\n${{ steps.issues.outputs.issues }}'
+            });
+
+            // Update label
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              labels: ['augmentbot:waiting-review']
+            });
+
+      - name: Auto-merge PR
+        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Post approval message
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }},
+              body: '✅ **Codex approved!**\n\nAuto-merging PR now...'
+            });
+
+            // Merge the PR
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: ${{ steps.pr.outputs.number }},
+                merge_method: 'squash',
+                commit_title: 'Merge PR #${{ steps.pr.outputs.number }} - Codex approved',
+                commit_message: 'Automated merge by AugmentBot after Codex approval'
+              });
+
+              // Remove monitoring labels
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                name: 'augmentbot:monitoring'
+              }).catch(() => {});
+
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                name: 'augmentbot:waiting-review'
+              }).catch(() => {});
+
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                body: '⚠️ **Auto-merge failed**\n\nError: ' + error.message + '\n\nPlease merge manually.'
+              });
+            }
+

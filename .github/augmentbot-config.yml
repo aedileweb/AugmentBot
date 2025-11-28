@@ -1,0 +1,37 @@
+# AugmentBot Configuration
+
+# Codex bot usernames to detect (case-insensitive)
+codex_usernames:
+  - codex
+  - codex-bot
+  - codex-reviewer
+  - codex-ai
+
+# Approval patterns to detect in Codex comments
+approval_patterns:
+  - "no major issues"
+  - "looks good"
+  - "lgtm"
+  - "approved"
+  - "👍"
+  - "✅"
+
+# Auto-merge settings
+auto_merge:
+  enabled: true
+  merge_method: squash  # Options: merge, squash, rebase
+  delete_branch_after_merge: true
+
+# Labels used by AugmentBot
+labels:
+  monitoring: "augmentbot:monitoring"
+  waiting_review: "augmentbot:waiting-review"
+  approved: "augmentbot:approved"
+  error: "augmentbot:error"
+
+# Git commit settings
+git:
+  commit_author_name: "AugmentBot"
+  commit_author_email: "augmentbot@users.noreply.github.com"
+  commit_message_prefix: "fix:"
+
