@@ -431,6 +431,14 @@ jobs:
           echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
           echo "${{ steps.issues.outputs.issues }}"
 
+      - name: Debug secret format
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
+        run: |
+          echo "Secret length: ${#AUGMENT_SESSION_AUTH}"
+          echo "First 50 chars: ${AUGMENT_SESSION_AUTH:0:50}"
+        env:
+          AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
+
       - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: augmentcode/augment-agent@main
