@@ -1,7 +1,7 @@
 name: AugmentBot - Automated Code Review Response
 
 on:
-  # Allow this workflow to be called from other repositories
+  # This workflow can only be called from other repositories
   workflow_call:
     secrets:
       AUGMENT_SESSION_AUTH:
@@ -9,14 +9,7 @@ on:
         required: true
       GH_TOKEN:
         description: 'GitHub token with write permissions'
-        required: false
-  # Also allow direct triggers when used in this repository
-  issue_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
-  pull_request:
-    types: [opened, synchronize]
+        required: true
 
 permissions:
   contents: write
