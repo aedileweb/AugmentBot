@@ -9,7 +9,7 @@ on:
         required: true
       GH_TOKEN:
         description: 'GitHub token with write permissions'
-        required: true
+        required: false
 
 permissions:
   contents: write
