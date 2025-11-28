@@ -433,7 +433,7 @@ jobs:
 
       - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
-        uses: augmentcode/augment-agent@v1
+        uses: augmentcode/augment-agent@main
         with:
           augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
