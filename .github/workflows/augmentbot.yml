@@ -441,6 +441,14 @@ jobs:
         run: |
           echo "🔧 Applying fixes for Codex review issues..."
 
+          # Debug: Check if auth is available (show only first 10 chars)
+          if [ -n "$AUGMENT_SESSION_AUTH" ]; then
+            echo "✅ AUGMENT_SESSION_AUTH is set (${#AUGMENT_SESSION_AUTH} chars)"
+          else
+            echo "❌ AUGMENT_SESSION_AUTH is NOT set"
+            exit 1
+          fi
+
           # Create prompt for Auggie
           PROMPT="Fix the following code review issues identified by Codex:
 
