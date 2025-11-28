@@ -476,6 +476,12 @@ jobs:
           echo "$DECODED" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Configure git for Augment Agent
+        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
+        run: |
+          git config user.email "nic@aedileconsulting.com"
+          git config user.name "AugmentBot"
+
       - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: augmentcode/augment-agent@main
@@ -483,22 +489,21 @@ jobs:
           augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           instruction: |
-            Fix the following specific code review issues identified by Codex.
-            Each issue includes the file path, line number, and context from the review comment.
-
-            IMPORTANT: Only fix these specific issues. Do not search for or fix other issues.
-
-            Issues to fix:
+            Fix ONLY the following code review issues. Each issue lists the exact file and line number.
 
             ${{ steps.decode_issues.outputs.decoded_issues }}
 
-            For each issue:
-            1. Go to the specified file and line number
-            2. Read the context from the review comment
-            3. Apply the specific fix described
-            4. Do not make any other changes
+            Steps:
+            1. Open each file listed above
+            2. Go to the specified line number
+            3. Apply the fix described in the context
+            4. Commit with message: "fix: [brief description of issues fixed]"
+            5. Push the commit using: git push origin HEAD
 
-            After making the fixes, commit the changes with a descriptive message listing the issues fixed.
+            CRITICAL:
+            - Do NOT search for other issues
+            - Do NOT run codebase-retrieval unless you need to understand dependencies
+            - Git is already configured, just commit and push
 
       - name: Alert on loop detection
         if: steps.issues.outputs.has_loops == 'true'
