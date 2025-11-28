@@ -441,11 +441,25 @@ jobs:
         run: |
           echo "🔧 Applying fixes for Codex review issues..."
 
-          # Debug: Check if auth is available (show only first 10 chars)
+          # Debug: Check if auth is available
           if [ -n "$AUGMENT_SESSION_AUTH" ]; then
             echo "✅ AUGMENT_SESSION_AUTH is set (${#AUGMENT_SESSION_AUTH} chars)"
           else
             echo "❌ AUGMENT_SESSION_AUTH is NOT set"
+            exit 1
+          fi
+
+          # Set up Auggie config directory and write auth
+          mkdir -p ~/.config/auggie
+          echo "$AUGMENT_SESSION_AUTH" > ~/.config/auggie/session_auth
+          chmod 600 ~/.config/auggie/session_auth
+
+          # Verify Auggie can authenticate
+          echo "Testing Auggie authentication..."
+          if auggie --version > /dev/null 2>&1; then
+            echo "✅ Auggie CLI is working"
+          else
+            echo "❌ Auggie CLI test failed"
             exit 1
           fi
 
