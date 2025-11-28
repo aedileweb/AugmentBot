@@ -217,7 +217,8 @@ jobs:
 
               // Pattern 4: P1/P2 badges (Codex line comments)
               // Format: **<sub><sub>![P1 Badge]...</sub></sub>  Issue Title**
-              const badgeMatches = text.matchAll(/\*\*<sub>.*?(?:P1|P2).*?<\/sub>\s+(.+?)\*\*/gm);
+              // Match the nested <sub> tags and capture the title after them
+              const badgeMatches = text.matchAll(/\*\*<sub><sub>.*?(?:P1|P2).*?<\/sub><\/sub>\s+(.+?)\*\*/gm);
               for (const match of badgeMatches) {
                 issues.push(match[1].trim());
               }
