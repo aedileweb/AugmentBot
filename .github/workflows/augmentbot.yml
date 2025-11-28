@@ -355,7 +355,8 @@ jobs:
 
             core.setOutput('has_unresolved', unresolvedIssues.length > 0);
             core.setOutput('unresolved_count', unresolvedIssues.length);
-            core.setOutput('unresolved_issues', unresolvedIssues.join('\n- '));
+            // Add bullet point to ALL issues, not just after the first one
+            core.setOutput('unresolved_issues', unresolvedIssues.map(i => `- ${i}`).join('\n'));
             // Use base64 encoding to safely pass complex text with special characters
             core.setOutput('issues_with_context', Buffer.from(formattedIssues).toString('base64'));
             core.setOutput('has_loops', loopDetection.hasLoops);
