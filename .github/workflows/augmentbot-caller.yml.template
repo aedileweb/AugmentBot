@@ -1,0 +1,37 @@
+# AugmentBot Caller Workflow
+# 
+# This is a template file that other repositories can use to enable AugmentBot.
+# 
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to your repository as `.github/workflows/augmentbot.yml`
+# 2. Ensure AUGMENT_SESSION_AUTH is set as an organization secret OR repository secret
+# 3. Commit and push
+# 4. AugmentBot will now work on all PRs in this repository!
+#
+# USAGE:
+# - Comment `@augment takeover` on any PR to activate AugmentBot
+# - Bot will monitor for Codex reviews and automatically apply fixes
+# - Auto-merges when Codex approves
+
+name: AugmentBot
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  augmentbot:
+    uses: aedileweb/AugmentBot/.github/workflows/augmentbot.yml@main
+    secrets:
+      AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

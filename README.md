@@ -24,6 +24,34 @@ AugmentBot is a GitHub Actions-based automation that handles the code review cyc
 
 ## 🏗️ Architecture
 
+### Reusable Workflow Design
+
+AugmentBot uses a **centralized reusable workflow** for easy management across all repositories:
+
+```
+┌─────────────────────────────────────┐
+│  AugmentBot Repository (Central)    │
+│  .github/workflows/augmentbot.yml   │ ← Main workflow logic
+│  (Reusable Workflow)                │
+└─────────────────────────────────────┘
+              ↑ ↑ ↑
+              │ │ │ Calls reusable workflow
+              │ │ │
+    ┌─────────┘ │ └─────────┐
+    │           │           │
+┌───┴────┐  ┌──┴────┐  ┌───┴────┐
+│ Repo A │  │ Repo B│  │ Repo C │
+│ (5 line│  │ (5 line│ │ (5 line│
+│ caller)│  │ caller)│ │ caller)│
+└────────┘  └───────┘  └────────┘
+```
+
+**Benefits:**
+- ✅ **Update once, apply everywhere** - Change the main workflow, all repos get the update
+- ✅ **Minimal setup** - Just 5 lines per repository
+- ✅ **Centralized secret** - One organization secret for all repos
+- ✅ **Easy maintenance** - No need to update individual repositories
+
 ### GitHub Actions Workflow
 
 AugmentBot runs entirely on **GitHub Actions** - no server required!
@@ -92,35 +120,59 @@ The bot is fully implemented and ready for testing on real PRs!
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- GitHub repository with Actions enabled
-- Augment CLI account (run `auggie login` locally)
-- Codex bot configured for your repository
+### For This Repository (AugmentBot)
 
-### Setup Steps
+AugmentBot is already configured and ready to use in this repository!
 
-1. **Get Augment Token**
-   ```bash
-   # Login to Auggie CLI
-   auggie login
+### For Any Other Repository
 
-   # Get your token
-   auggie tokens print
-   ```
+AugmentBot uses a **reusable workflow** - add it to any repository with just 5 lines!
 
-2. **Add GitHub Secret**
-   - Go to your repo → Settings → Secrets and variables → Actions
-   - Click "New repository secret"
+#### Option 1: Organization-Wide Setup (Recommended)
+
+**One-time setup for all repositories:**
+
+See **[ORGANIZATION_SETUP.md](ORGANIZATION_SETUP.md)** for complete instructions.
+
+**Quick version:**
+1. Organization secret is already set: ✅ `AUGMENT_SESSION_AUTH`
+2. Add this file to any repository as `.github/workflows/augmentbot.yml`:
+
+```yaml
+name: AugmentBot
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  augmentbot:
+    uses: aedileweb/AugmentBot/.github/workflows/augmentbot.yml@main
+    secrets:
+      AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+3. Commit and push - Done! 🎉
+
+#### Option 2: Single Repository Setup
+
+If you only want AugmentBot on one repository:
+
+1. **Add repository secret:**
+   - Go to repo → Settings → Secrets → Actions
    - Name: `AUGMENT_SESSION_AUTH`
-   - Value: Your token from step 1
+   - Value: Your Augment token (get with `auggie tokens print`)
 
-3. **Enable Workflow**
-   - The workflow file is already in `.github/workflows/augmentbot.yml`
-   - It will activate automatically on the next PR comment
+2. **Add the workflow file** (same 5-line file as above)
 
-4. **Configure Codex Usernames** (optional)
-   - Edit `.github/augmentbot-config.yml`
-   - Add your Codex bot's username to `codex_usernames`
+3. **Commit and push**
 
 ### Usage
 
@@ -284,6 +336,49 @@ AugmentBot uses GitHub PR labels for state:
 1. Ensure branch protection rules allow auto-merge
 2. Check that all required status checks pass
 3. Verify Codex comment contains approval patterns (see config)
+
+## 🔄 Updating AugmentBot
+
+### Updating the Workflow for All Repositories
+
+Since AugmentBot uses a reusable workflow, updates are automatic:
+
+1. **Edit the main workflow:**
+   ```bash
+   # In the AugmentBot repository
+   vim .github/workflows/augmentbot.yml
+   ```
+
+2. **Commit and push:**
+   ```bash
+   git add .github/workflows/augmentbot.yml
+   git commit -m "feat: Improve Codex detection"
+   git push
+   ```
+
+3. **All repositories automatically use the new version!** 🎉
+
+No need to update individual repositories - they all reference `@main` and get updates automatically.
+
+### Updating Configuration Per Repository
+
+If a specific repository needs custom settings:
+
+1. **Copy the config file:**
+   ```bash
+   cp .github/augmentbot-config.yml /path/to/other/repo/.github/
+   ```
+
+2. **Customize and commit:**
+   ```bash
+   cd /path/to/other/repo
+   vim .github/augmentbot-config.yml
+   git add .github/augmentbot-config.yml
+   git commit -m "chore: Customize AugmentBot config"
+   git push
+   ```
+
+---
 
 ## 🚀 Future Enhancements
 

@@ -1,6 +1,16 @@
 name: AugmentBot - Automated Code Review Response
 
 on:
+  # Allow this workflow to be called from other repositories
+  workflow_call:
+    secrets:
+      AUGMENT_SESSION_AUTH:
+        description: 'Augment CLI authentication token'
+        required: true
+      GH_TOKEN:
+        description: 'GitHub token with write permissions'
+        required: false
+  # Also allow direct triggers when used in this repository
   issue_comment:
     types: [created]
   pull_request_review:
@@ -24,7 +34,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Use passed token for reusable workflow, or GITHUB_TOKEN for direct use
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
