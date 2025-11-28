@@ -128,8 +128,16 @@ jobs:
               per_page: 100
             });
 
-            // Get all review comments
-            const { data: reviewComments } = await github.rest.pulls.listReviews({
+            // Get all review comments (line-level comments)
+            const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100
+            });
+
+            // Get all reviews (overall review bodies)
+            const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber,
@@ -154,12 +162,15 @@ jobs:
               /✅.*ready to merge/i
             ];
 
-            // Find all Codex comments
+            // Find all Codex comments (issue comments, review comments, and reviews)
             const codexComments = [
               ...comments.filter(c =>
                 codexUsernames.some(u => c.user.login.toLowerCase().includes(u.toLowerCase()))
               ),
               ...reviewComments.filter(r =>
+                codexUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
+              ),
+              ...reviews.filter(r =>
                 codexUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
               )
             ].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -179,8 +190,8 @@ jobs:
               return { unresolvedIssues: [], count: 0, isApproved: true };
             }
 
-            // Extract issues from the latest non-approval comment
-            const commentBody = latestCodexComment.body;
+            // Extract issues from ALL Codex review comments (not just the latest)
+            // This handles line-level review comments which each contain one issue
 
             // Extract issues function
             function extractIssues(text) {
@@ -204,8 +215,22 @@ jobs:
                 issues.push(match[1].trim());
               }
 
+              // Pattern 4: P1/P2 badges (Codex line comments)
+              const badgeMatches = text.matchAll(/\*\*.*?(?:P1|P2).*?\s+(.+?)\*\*/gm);
+              for (const match of badgeMatches) {
+                issues.push(match[1].trim());
+              }
+
               return [...new Set(issues)];
             }
+
+            // Collect issues from ALL Codex comments, not just the latest
+            const allIssues = [];
+            for (const comment of codexComments) {
+              const extracted = extractIssues(comment.body);
+              allIssues.push(...extracted);
+            }
+            const issues = [...new Set(allIssues)]; // Remove duplicates
 
             // Check if issue is resolved
             function isIssueResolved(issue, commits) {
@@ -247,7 +272,6 @@ jobs:
               return { hasLoops: loops.length > 0, loops };
             }
 
-            const issues = extractIssues(commentBody);
             const unresolvedIssues = issues.filter(issue => !isIssueResolved(issue, commits));
             const loopDetection = detectLoops(codexComments, commits);
 
