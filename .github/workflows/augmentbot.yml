@@ -285,11 +285,17 @@ jobs:
             function isIssueResolved(issue, commits) {
               const issueKeywords = issue.toLowerCase().split(/\s+/).filter(w => w.length > 3);
 
+              // Require at least 50% of keywords to match (minimum 2) to avoid false positives
+              const minMatches = Math.max(2, Math.ceil(issueKeywords.length * 0.5));
+
               return commits.some(commit => {
                 const message = commit.commit.message.toLowerCase();
                 const hasFix = /\b(fix|resolve|address|correct)\b/.test(message);
-                const hasKeywords = issueKeywords.some(keyword => message.includes(keyword));
-                return hasFix && hasKeywords;
+
+                // Count how many keywords match
+                const matchCount = issueKeywords.filter(keyword => message.includes(keyword)).length;
+
+                return hasFix && matchCount >= minMatches;
               });
             }
 
