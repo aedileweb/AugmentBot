@@ -436,10 +436,11 @@ jobs:
 
       - name: Apply fixes with Auggie CLI
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
-        env:
-          AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
         run: |
           echo "🔧 Applying fixes for Codex review issues..."
+
+          # Explicitly export the auth variable
+          export AUGMENT_SESSION_AUTH="${{ secrets.AUGMENT_SESSION_AUTH }}"
 
           # Debug: Check if auth is available
           if [ -n "$AUGMENT_SESSION_AUTH" ]; then
@@ -449,19 +450,9 @@ jobs:
             exit 1
           fi
 
-          # Set up Auggie config directory and write auth
-          mkdir -p ~/.config/auggie
-          echo "$AUGMENT_SESSION_AUTH" > ~/.config/auggie/session_auth
-          chmod 600 ~/.config/auggie/session_auth
-
-          # Verify Auggie can authenticate
-          echo "Testing Auggie authentication..."
-          if auggie --version > /dev/null 2>&1; then
-            echo "✅ Auggie CLI is working"
-          else
-            echo "❌ Auggie CLI test failed"
-            exit 1
-          fi
+          # Debug: Check what auggie sees
+          echo "Testing auggie with auth..."
+          env | grep -i augment || echo "No AUGMENT vars in environment"
 
           # Create prompt for Auggie
           PROMPT="Fix the following code review issues identified by Codex:
@@ -470,9 +461,9 @@ jobs:
 
           Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues."
 
-          # Run Auggie in automation mode
+          # Run Auggie in automation mode with explicit auth
           echo "Running: auggie --print --quiet"
-          if auggie --print --quiet "$PROMPT" > auggie-output.txt 2>&1; then
+          if AUGMENT_SESSION_AUTH="$AUGMENT_SESSION_AUTH" auggie --print --quiet "$PROMPT" > auggie-output.txt 2>&1; then
             echo "✅ Auggie completed successfully"
             cat auggie-output.txt
           else
