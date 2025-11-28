@@ -35,9 +35,6 @@ jobs:
         with:
           node-version: '22'
       
-      - name: Install Auggie CLI
-        run: npm install -g @augmentcode/auggie
-      
       - name: Get PR details
         id: pr
         uses: actions/github-script@v7
@@ -434,43 +431,20 @@ jobs:
           echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
           echo "${{ steps.issues.outputs.issues }}"
 
-      - name: Apply fixes with Auggie CLI
+      - name: Apply fixes with Augment Agent
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
-        run: |
-          echo "🔧 Applying fixes for Codex review issues..."
+        uses: augmentcode/augment-agent@v1
+        with:
+          augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
+          github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          instruction: |
+            Fix the following code review issues identified by Codex:
 
-          # Explicitly export the auth variable
-          export AUGMENT_SESSION_AUTH="${{ secrets.AUGMENT_SESSION_AUTH }}"
+            ${{ steps.issues.outputs.issues }}
 
-          # Debug: Check if auth is available
-          if [ -n "$AUGMENT_SESSION_AUTH" ]; then
-            echo "✅ AUGMENT_SESSION_AUTH is set (${#AUGMENT_SESSION_AUTH} chars)"
-          else
-            echo "❌ AUGMENT_SESSION_AUTH is NOT set"
-            exit 1
-          fi
+            Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues.
 
-          # Debug: Check what auggie sees
-          echo "Testing auggie with auth..."
-          env | grep -i augment || echo "No AUGMENT vars in environment"
-
-          # Create prompt for Auggie
-          PROMPT="Fix the following code review issues identified by Codex:
-
-          ${{ steps.issues.outputs.issues }}
-
-          Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues."
-
-          # Run Auggie in automation mode with explicit auth
-          echo "Running: auggie --print --quiet"
-          if AUGMENT_SESSION_AUTH="$AUGMENT_SESSION_AUTH" auggie --print --quiet "$PROMPT" > auggie-output.txt 2>&1; then
-            echo "✅ Auggie completed successfully"
-            cat auggie-output.txt
-          else
-            echo "❌ Auggie failed with exit code $?"
-            cat auggie-output.txt
-            exit 1
-          fi
+            After making the fixes, commit the changes with a descriptive message.
 
       - name: Alert on loop detection
         if: steps.issues.outputs.has_loops == 'true'
@@ -501,27 +475,7 @@ jobs:
               body: message
             });
 
-      - name: Commit and push fixes
-        if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
-        run: |
-          git config user.name "AugmentBot"
-          git config user.email "augmentbot@users.noreply.github.com"
 
-          # Check if there are changes
-          if [[ -n $(git status -s) ]]; then
-            git add .
-            git commit -m "fix: Apply Codex review fixes
-
-          Automated fixes applied by AugmentBot in response to Codex review.
-
-          Issues addressed:
-          ${{ steps.issues.outputs.issues }}"
-
-            git push origin ${{ steps.pr.outputs.head_ref }}
-            echo "✅ Changes committed and pushed"
-          else
-            echo "ℹ️ No changes to commit"
-          fi
 
       - name: Request re-review from Codex
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
