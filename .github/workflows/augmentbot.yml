@@ -216,9 +216,22 @@ jobs:
               }
 
               // Pattern 4: P1/P2 badges (Codex line comments)
-              const badgeMatches = text.matchAll(/\*\*.*?(?:P1|P2).*?\s+(.+?)\*\*/gm);
+              // Format: **<sub><sub>![P1 Badge]...</sub></sub>  Issue Title**
+              const badgeMatches = text.matchAll(/\*\*<sub>.*?(?:P1|P2).*?<\/sub>\s+(.+?)\*\*/gm);
               for (const match of badgeMatches) {
                 issues.push(match[1].trim());
+              }
+
+              // Pattern 5: Simple bold text at start of line (fallback)
+              if (issues.length === 0) {
+                const simpleBoldMatches = text.matchAll(/^\*\*([^*]+)\*\*/gm);
+                for (const match of simpleBoldMatches) {
+                  const title = match[1].trim();
+                  // Skip generic headers
+                  if (!title.includes('Codex Review') && !title.includes('About Codex')) {
+                    issues.push(title);
+                  }
+                }
               }
 
               return [...new Set(issues)];
@@ -226,11 +239,17 @@ jobs:
 
             // Collect issues from ALL Codex comments, not just the latest
             const allIssues = [];
+            core.info(`Found ${codexComments.length} Codex comments to process`);
             for (const comment of codexComments) {
               const extracted = extractIssues(comment.body);
+              core.info(`Extracted ${extracted.length} issues from comment ${comment.id}`);
+              if (extracted.length > 0) {
+                core.info(`Issues: ${extracted.join(', ')}`);
+              }
               allIssues.push(...extracted);
             }
             const issues = [...new Set(allIssues)]; // Remove duplicates
+            core.info(`Total unique issues found: ${issues.length}`);
 
             // Check if issue is resolved
             function isIssueResolved(issue, commits) {
