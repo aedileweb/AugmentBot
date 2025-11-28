@@ -367,40 +367,72 @@ jobs:
           script: |
             const comment = context.payload.comment;
             const review = context.payload.review;
-            
+
             // Check if this is a Codex comment
             const codexUsernames = process.env.CODEX_USERNAMES.split(',');
             let isCodex = false;
             let commentBody = '';
-            
+            let reviewId = null;
+
             if (comment) {
-              isCodex = codexUsernames.some(username => 
+              isCodex = codexUsernames.some(username =>
                 comment.user.login.toLowerCase().includes(username.toLowerCase())
               );
               commentBody = comment.body;
             } else if (review) {
-              isCodex = codexUsernames.some(username => 
+              isCodex = codexUsernames.some(username =>
                 review.user.login.toLowerCase().includes(username.toLowerCase())
               );
               commentBody = review.body;
+              reviewId = review.id;
             }
-            
+
             core.setOutput('is_codex', isCodex);
             core.setOutput('comment_body', commentBody);
-            
-            // Check for approval
+            core.setOutput('review_id', reviewId || '');
+
+            // Check for approval - need to check both review body AND line-level comments
+            let isApproval = false;
+
+            // First check review body for approval patterns
             const approvalPatterns = [
               /no major issues/i,
+              /didn't find any major issues/i,
               /looks good/i,
               /lgtm/i,
-              /👍/,
-              /✅/
+              /approved/i,
+              /ready to merge/i
             ];
-            
-            const isApproval = approvalPatterns.some(pattern => pattern.test(commentBody));
+
+            if (approvalPatterns.some(pattern => pattern.test(commentBody))) {
+              isApproval = true;
+            }
+
+            // If this is a review, also check for line-level comments with P0/P1/P2 badges
+            if (reviewId && !isApproval) {
+              const prNumber = context.payload.pull_request?.number;
+              if (prNumber) {
+                const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                  per_page: 100
+                });
+
+                // Check if any review comments from this review have P0/P1/P2 badges
+                const hasIssues = reviewComments.some(rc =>
+                  rc.pull_request_review_id === reviewId &&
+                  /\*\*<sub><sub>.*?(?:P0|P1|P2).*?<\/sub><\/sub>/i.test(rc.body)
+                );
+
+                // If no issues found, it's an approval
+                isApproval = !hasIssues;
+              }
+            }
+
             core.setOutput('is_approval', isApproval);
-            
-            return { isCodex, isApproval, commentBody };
+
+            return { isCodex, isApproval, commentBody, reviewId };
         env:
           CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector
 
