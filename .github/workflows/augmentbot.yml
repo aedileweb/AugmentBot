@@ -406,6 +406,12 @@ jobs:
           git fetch origin ${{ steps.pr.outputs.head_ref }}
           git checkout ${{ steps.pr.outputs.head_ref }}
 
+      - name: Show extracted issues
+        if: steps.issues.outputs.count > 0
+        run: |
+          echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
+          echo "${{ steps.issues.outputs.issues }}"
+
       - name: Apply fixes with Auggie CLI
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         env:
@@ -421,10 +427,15 @@ jobs:
           Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues."
 
           # Run Auggie in automation mode
-          auggie --print --quiet "$PROMPT" > auggie-output.txt
-
-          echo "✅ Auggie completed"
-          cat auggie-output.txt
+          echo "Running: auggie --print --quiet"
+          if auggie --print --quiet "$PROMPT" > auggie-output.txt 2>&1; then
+            echo "✅ Auggie completed successfully"
+            cat auggie-output.txt
+          else
+            echo "❌ Auggie failed with exit code $?"
+            cat auggie-output.txt
+            exit 1
+          fi
 
       - name: Alert on loop detection
         if: steps.issues.outputs.has_loops == 'true'
