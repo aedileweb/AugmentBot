@@ -195,6 +195,26 @@ jobs:
             core.info(`Latest Codex comment from: ${latestCodexComment.user.login}`);
             core.info(`Latest Codex comment body preview: ${latestCodexComment.body.substring(0, 150)}...`);
 
+            // Check for Codex error messages (out of credits, not configured, etc.)
+            const errorPatterns = [
+              /usage limits have been reached/i,
+              /out of credits/i,
+              /credits must be used/i,
+              /not configured/i,
+              /check with the admins/i,
+              /increase the limits/i,
+              /codex is not enabled/i,
+              /codex has been disabled/i
+            ];
+
+            const isError = errorPatterns.some(pattern => pattern.test(latestCodexComment.body));
+
+            if (isError) {
+              core.warning('⚠️ Codex error message detected - skipping issue extraction');
+              core.setOutput('has_unresolved', false);
+              return { unresolvedIssues: [], count: 0, isError: true };
+            }
+
             // Check for approval
             const hasApprovalKeywords = approvalPatterns.some(p => p.test(latestCodexComment.body));
             const hasThumbsUp = hasStandaloneThumbsUp(latestCodexComment.body);
@@ -408,6 +428,26 @@ jobs:
             core.setOutput('is_codex', isCodex);
             core.setOutput('comment_body', commentBody);
             core.setOutput('review_id', reviewId || '');
+
+            // Check for Codex error messages (out of credits, not configured, etc.)
+            const errorPatterns = [
+              /usage limits have been reached/i,
+              /out of credits/i,
+              /credits must be used/i,
+              /not configured/i,
+              /check with the admins/i,
+              /increase the limits/i,
+              /codex is not enabled/i,
+              /codex has been disabled/i
+            ];
+
+            const isError = errorPatterns.some(pattern => pattern.test(commentBody));
+
+            if (isError) {
+              core.warning('⚠️ Codex error message detected - skipping workflow');
+              core.setOutput('is_codex', false); // Treat as non-Codex to skip processing
+              return { isCodex: false, isApproval: false, isError: true, commentBody };
+            }
 
             // Check for approval - need to check both review body AND line-level comments
             let isApproval = false;
