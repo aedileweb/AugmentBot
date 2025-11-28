@@ -254,8 +254,9 @@ jobs:
               return [...new Set(issues)];
             }
 
-            // Collect issues from ALL Codex comments, not just the latest
+            // Collect issues from ALL Codex comments with full context
             const allIssues = [];
+            const issuesWithContext = [];
             core.info(`Found ${codexComments.length} Codex comments to process`);
             for (const comment of codexComments) {
               core.info(`Processing comment ${comment.id} from ${comment.user.login}`);
@@ -264,6 +265,16 @@ jobs:
               core.info(`Extracted ${extracted.length} issues from comment ${comment.id}`);
               if (extracted.length > 0) {
                 core.info(`Issues: ${JSON.stringify(extracted)}`);
+                // Store issues with full context (file path, line numbers, body)
+                for (const issue of extracted) {
+                  const contextEntry = {
+                    title: issue,
+                    file: comment.path || 'N/A',
+                    line: comment.line || comment.original_line || 'N/A',
+                    body: comment.body
+                  };
+                  issuesWithContext.push(contextEntry);
+                }
               }
               allIssues.push(...extracted);
             }
@@ -311,11 +322,30 @@ jobs:
             }
 
             const unresolvedIssues = issues.filter(issue => !isIssueResolved(issue, commits));
+            const unresolvedWithContext = issuesWithContext.filter(ctx =>
+              unresolvedIssues.includes(ctx.title)
+            );
             const loopDetection = detectLoops(codexComments, commits);
+
+            // Format issues with context for Augment Agent
+            const formattedIssues = unresolvedWithContext.map(ctx => {
+              let formatted = `**${ctx.title}**`;
+              if (ctx.file !== 'N/A') {
+                formatted += `\n  File: ${ctx.file}`;
+                if (ctx.line !== 'N/A') {
+                  formatted += ` (line ${ctx.line})`;
+                }
+              }
+              // Include relevant excerpt from comment body
+              const bodyLines = ctx.body.split('\n').slice(0, 5).join('\n');
+              formatted += `\n  Context: ${bodyLines}`;
+              return formatted;
+            }).join('\n\n');
 
             core.setOutput('has_unresolved', unresolvedIssues.length > 0);
             core.setOutput('unresolved_count', unresolvedIssues.length);
             core.setOutput('unresolved_issues', unresolvedIssues.join('\n- '));
+            core.setOutput('issues_with_context', formattedIssues);
             core.setOutput('has_loops', loopDetection.hasLoops);
             core.setOutput('loop_details', JSON.stringify(loopDetection.loops));
 
@@ -438,13 +468,22 @@ jobs:
           augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           instruction: |
-            Fix the following code review issues identified by Codex:
+            Fix the following specific code review issues identified by Codex.
+            Each issue includes the file path, line number, and context from the review comment.
 
-            ${{ steps.issues.outputs.issues }}
+            IMPORTANT: Only fix these specific issues. Do not search for or fix other issues.
 
-            Please analyze the codebase, identify the files that need changes, and apply the necessary fixes to address these issues.
+            Issues to fix:
 
-            After making the fixes, commit the changes with a descriptive message.
+            ${{ steps.historical.outputs.issues_with_context }}
+
+            For each issue:
+            1. Go to the specified file and line number
+            2. Read the context from the review comment
+            3. Apply the specific fix described
+            4. Do not make any other changes
+
+            After making the fixes, commit the changes with a descriptive message listing the issues fixed.
 
       - name: Alert on loop detection
         if: steps.issues.outputs.has_loops == 'true'
