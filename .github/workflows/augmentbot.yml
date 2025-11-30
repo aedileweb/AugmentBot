@@ -426,7 +426,8 @@ jobs:
             }
 
             core.setOutput('is_codex', isCodex);
-            core.setOutput('comment_body', commentBody);
+            // Base64 encode comment body to prevent JavaScript syntax errors from backticks
+            core.setOutput('comment_body', Buffer.from(commentBody).toString('base64'));
             core.setOutput('review_id', reviewId || '');
 
             // Check for Codex error messages (out of credits, not configured, etc.)
@@ -507,8 +508,8 @@ jobs:
             let issueCount = 0;
 
             if ('${{ steps.codex.outputs.is_codex }}' === 'true') {
-              // Current comment is from Codex
-              const commentBody = `${{ steps.codex.outputs.comment_body }}`;
+              // Current comment is from Codex - decode from base64
+              const commentBody = Buffer.from('${{ steps.codex.outputs.comment_body }}', 'base64').toString('utf-8');
 
               const issuePatterns = [
                 /[-*]\s*(.+?)(?=\n[-*]|\n\n|$)/gs,
