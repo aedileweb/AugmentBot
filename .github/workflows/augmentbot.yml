@@ -4,15 +4,12 @@ on:
   # This workflow can only be called from other repositories
   workflow_call:
     secrets:
-      AUGMENT_SESSION_AUTH:
-        description: 'Augment CLI authentication token (JSON format)'
-        required: false
       AUGMENT_API_TOKEN:
         description: 'Augment API token'
-        required: false
+        required: true
       AUGMENT_API_URL:
         description: 'Augment API URL'
-        required: false
+        required: true
       GH_TOKEN:
         description: 'GitHub token with write permissions'
         required: false
@@ -619,10 +616,9 @@ jobs:
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: augmentcode/augment-agent@main
         with:
-          # Use token/URL method (preferred) or fall back to session auth
-          augment_api_token: ${{ secrets.AUGMENT_API_TOKEN || '' }}
-          augment_api_url: ${{ secrets.AUGMENT_API_URL || '' }}
-          augment_session_auth: ${{ secrets.AUGMENT_API_TOKEN == '' && secrets.AUGMENT_SESSION_AUTH || '' }}
+          # Use ONLY token/URL method (simpler and more reliable)
+          augment_api_token: ${{ secrets.AUGMENT_API_TOKEN }}
+          augment_api_url: ${{ secrets.AUGMENT_API_URL }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           instruction: |
             Fix ONLY the following code review issues. Each issue lists the exact file and line number.
