@@ -619,9 +619,10 @@ jobs:
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: augmentcode/augment-agent@main
         with:
-          augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
-          augment_api_token: ${{ secrets.AUGMENT_API_TOKEN }}
-          augment_api_url: ${{ secrets.AUGMENT_API_URL }}
+          # Use token/URL method (preferred) or fall back to session auth
+          augment_api_token: ${{ secrets.AUGMENT_API_TOKEN || '' }}
+          augment_api_url: ${{ secrets.AUGMENT_API_URL || '' }}
+          augment_session_auth: ${{ secrets.AUGMENT_API_TOKEN == '' && secrets.AUGMENT_SESSION_AUTH || '' }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           instruction: |
             Fix ONLY the following code review issues. Each issue lists the exact file and line number.
