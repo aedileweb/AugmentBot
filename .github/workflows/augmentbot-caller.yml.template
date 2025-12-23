@@ -34,4 +34,4 @@ jobs:
     secrets:
       AUGMENT_SESSION_AUTH: ${{ secrets.AUGMENT_SESSION_AUTH }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+      SLACK_WEBHOOK_CI: ${{ secrets.SLACK_WEBHOOK_CI }}
