@@ -5,8 +5,14 @@ on:
   workflow_call:
     secrets:
       AUGMENT_SESSION_AUTH:
-        description: 'Augment CLI authentication token'
-        required: true
+        description: 'Augment CLI authentication token (JSON format)'
+        required: false
+      AUGMENT_API_TOKEN:
+        description: 'Augment API token'
+        required: false
+      AUGMENT_API_URL:
+        description: 'Augment API URL'
+        required: false
       GH_TOKEN:
         description: 'GitHub token with write permissions'
         required: false
@@ -614,6 +620,8 @@ jobs:
         uses: augmentcode/augment-agent@main
         with:
           augment_session_auth: ${{ secrets.AUGMENT_SESSION_AUTH }}
+          augment_api_token: ${{ secrets.AUGMENT_API_TOKEN }}
+          augment_api_url: ${{ secrets.AUGMENT_API_URL }}
           github_token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           instruction: |
             Fix ONLY the following code review issues. Each issue lists the exact file and line number.
