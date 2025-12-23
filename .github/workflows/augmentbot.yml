@@ -10,6 +10,9 @@ on:
       GH_TOKEN:
         description: 'GitHub token with write permissions'
         required: false
+      SLACK_WEBHOOK_CI:
+        description: 'Slack webhook URL for CI/CD notifications'
+        required: false
 
 permissions:
   contents: write
@@ -762,4 +765,84 @@ jobs:
               issue_number: prNumber,
               body: `🚨 **AugmentBot workflow failed!**\n\n**Failed step(s):** ${failedStepNames || 'Unknown'}\n\n**Workflow run:** ${workflowUrl}\n\nPlease check the logs and fix the issue, or contact the maintainers.`
             });
+
+      - name: Send Slack notification on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_CI }}
+        run: |
+          PR_NUMBER="${{ github.event.issue.number || github.event.pull_request.number }}"
+          PR_URL="https://github.com/${{ github.repository }}/pull/${PR_NUMBER}"
+          WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          REPO_NAME="${{ github.repository }}"
+
+          # Get failed step names
+          FAILED_STEPS=$(gh api /repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs --jq '.jobs[0].steps[] | select(.conclusion == "failure") | .name' | tr '\n' ', ' | sed 's/,$//')
+
+          if [ -z "$FAILED_STEPS" ]; then
+            FAILED_STEPS="Unknown"
+          fi
+
+          # Send Slack notification
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d @- << EOF
+          {
+            "blocks": [
+              {
+                "type": "header",
+                "text": {
+                  "type": "plain_text",
+                  "text": "🚨 AugmentBot Workflow Failed",
+                  "emoji": true
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Repository:*\n${REPO_NAME}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*PR:*\n<${PR_URL}|#${PR_NUMBER}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Failed Steps:*\n${FAILED_STEPS}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Triggered By:*\n${{ github.actor }}"
+                  }
+                ]
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Workflow Logs",
+                      "emoji": true
+                    },
+                    "url": "${WORKFLOW_URL}",
+                    "style": "danger"
+                  },
+                  {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View Pull Request",
+                      "emoji": true
+                    },
+                    "url": "${PR_URL}"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
 
