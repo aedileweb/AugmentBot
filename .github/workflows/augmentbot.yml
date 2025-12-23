@@ -747,24 +747,14 @@ jobs:
               return;
             }
 
-            // Get the failed step name
             const runId = context.runId;
-            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId
-            });
-
-            const failedSteps = jobs.jobs[0]?.steps?.filter(s => s.conclusion === 'failure') || [];
-            const failedStepNames = failedSteps.map(s => s.name).join(', ');
-
             const workflowUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `🚨 **AugmentBot workflow failed!**\n\n**Failed step(s):** ${failedStepNames || 'Unknown'}\n\n**Workflow run:** ${workflowUrl}\n\nPlease check the logs and fix the issue, or contact the maintainers.`
+              body: `🚨 **AugmentBot workflow failed!**\n\n**Workflow run:** ${workflowUrl}\n\nPlease check the logs to see which step failed and why.`
             });
 
       - name: Send Slack notification on failure
@@ -777,12 +767,8 @@ jobs:
           WORKFLOW_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           REPO_NAME="${{ github.repository }}"
 
-          # Get failed step names
-          FAILED_STEPS=$(gh api /repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs --jq '.jobs[0].steps[] | select(.conclusion == "failure") | .name' | tr '\n' ', ' | sed 's/,$//')
-
-          if [ -z "$FAILED_STEPS" ]; then
-            FAILED_STEPS="Unknown"
-          fi
+          # Note: Cannot get failed step names due to permission restrictions in reusable workflows
+          FAILED_STEPS="Check workflow logs for details"
 
           # Send Slack notification
           curl -X POST "$SLACK_WEBHOOK_URL" \
