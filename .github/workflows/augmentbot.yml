@@ -608,6 +608,7 @@ jobs:
             const issueCount = parseInt('${{ steps.issues.outputs.count }}') || 0;
             const hasLoops = '${{ steps.issues.outputs.has_loops }}' === 'true';
             const historicalCount = parseInt('${{ steps.historical.outputs.unresolved_count }}') || 0;
+            const issuesList = process.env.ISSUES_LIST || '';
 
             let statusMessage = '🤖 **AugmentBot Status**\n\n';
 
@@ -618,7 +619,7 @@ jobs:
             } else if (issueCount > 0) {
               statusMessage += `✅ **Activated and working!**\n\n`;
               statusMessage += `Found **${issueCount} issue(s)** from Codex review:\n\n`;
-              statusMessage += '${{ steps.issues.outputs.issues }}\n\n';
+              statusMessage += issuesList + '\n\n';
               statusMessage += '🔧 Starting to apply fixes now...';
             } else if (historicalCount > 0) {
               statusMessage += `📋 Found **${historicalCount} unresolved historical issue(s)**\n\n`;
@@ -635,6 +636,8 @@ jobs:
               issue_number: prNumber,
               body: statusMessage
             });
+        env:
+          ISSUES_LIST: ${{ steps.issues.outputs.issues }}
 
       - name: Decode issues context
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
