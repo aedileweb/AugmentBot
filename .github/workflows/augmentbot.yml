@@ -597,6 +597,45 @@ jobs:
           echo "📋 Found ${{ steps.issues.outputs.count }} issues to fix:"
           echo "${{ steps.issues.outputs.issues }}"
 
+      - name: Post status comment
+        if: steps.monitoring.outputs.enabled == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+            if (!prNumber) return;
+
+            const issueCount = parseInt('${{ steps.issues.outputs.count }}') || 0;
+            const hasLoops = '${{ steps.issues.outputs.has_loops }}' === 'true';
+            const historicalCount = parseInt('${{ steps.historical.outputs.unresolved_count }}') || 0;
+
+            let statusMessage = '🤖 **AugmentBot Status**\n\n';
+
+            if (hasLoops) {
+              statusMessage += '⚠️ **Loop Detected!**\n\n';
+              statusMessage += 'The same issues keep appearing after multiple fix attempts. Manual intervention required.\n\n';
+              statusMessage += `Issues stuck in loop: ${historicalCount}`;
+            } else if (issueCount > 0) {
+              statusMessage += `✅ **Activated and working!**\n\n`;
+              statusMessage += `Found **${issueCount} issue(s)** from Codex review:\n\n`;
+              statusMessage += '${{ steps.issues.outputs.issues }}\n\n';
+              statusMessage += '🔧 Starting to apply fixes now...';
+            } else if (historicalCount > 0) {
+              statusMessage += `📋 Found **${historicalCount} unresolved historical issue(s)**\n\n`;
+              statusMessage += 'These issues were identified in previous Codex reviews but not yet resolved.\n\n';
+              statusMessage += '🔧 Starting to apply fixes now...';
+            } else {
+              statusMessage += '✅ **Monitoring active**\n\n';
+              statusMessage += 'No unresolved Codex issues found. Waiting for Codex review...';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: statusMessage
+            });
+
       - name: Decode issues context
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         id: decode_issues
