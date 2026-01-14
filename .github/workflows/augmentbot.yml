@@ -245,9 +245,7 @@ jobs:
 
             if (isApproved) {
               core.info(`✅ Latest ${latestReviewerComment.reviewerType} comment is an approval`);
-              core.setOutput('has_unresolved', false);
-              core.setOutput('approved_by', latestReviewerComment.reviewerType);
-              return { unresolvedIssues: [], count: 0, isApproved: true, approvedBy: latestReviewerComment.reviewerType };
+              // Don't return early - still need to check for unresolved issues from other reviewers
             }
 
             // Extract issues from ALL Codex review comments (not just the latest)
@@ -350,7 +348,8 @@ jobs:
               const minMatches = Math.max(2, Math.ceil(issueKeywords.length * 0.5));
 
               return commits.some(commit => {
-                const commitTime = new Date(commit.commit.author.date);
+                // Use committer date (not author date) to handle cherry-picks and rebases
+                const commitTime = new Date(commit.commit.committer.date);
 
                 // Only consider commits made AFTER the review comment
                 if (commitTime <= reviewCommentTime) {
