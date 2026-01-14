@@ -221,15 +221,14 @@ jobs:
               return { unresolvedIssues: [], count: 0, isError: true };
             }
 
-            // Check for approval
+            // Check for approval in latest comment
             const hasApprovalKeywords = approvalPatterns.some(p => p.test(latestCodexComment.body));
             const hasThumbsUp = hasStandaloneThumbsUp(latestCodexComment.body);
             const isApproved = hasApprovalKeywords || hasThumbsUp;
 
             if (isApproved) {
               core.info('✅ Latest Codex comment is an approval');
-              core.setOutput('has_unresolved', false);
-              return { unresolvedIssues: [], count: 0, isApproved: true };
+              // Don't return early - still need to check for unresolved issues from other reviewers
             }
 
             // Extract issues from ALL Codex review comments (not just the latest)
@@ -302,13 +301,14 @@ jobs:
               core.info(`Extracted ${extracted.length} issues from comment ${comment.id}`);
               if (extracted.length > 0) {
                 core.info(`Issues: ${JSON.stringify(extracted)}`);
-                // Store issues with full context (file path, line numbers, body)
+                // Store issues with full context (file path, line numbers, body, timestamp)
                 for (const issue of extracted) {
                   const contextEntry = {
                     title: issue,
                     file: comment.path || 'N/A',
                     line: comment.line || comment.original_line || 'N/A',
-                    body: comment.body
+                    body: comment.body,
+                    reviewCommentTime: new Date(comment.created_at)
                   };
                   issuesWithContext.push(contextEntry);
                 }
@@ -319,13 +319,24 @@ jobs:
             core.info(`Total unique issues found: ${issues.length}`);
 
             // Check if issue is resolved
-            function isIssueResolved(issue, commits) {
+            // Takes an issue context object with reviewCommentTime
+            function isIssueResolved(issueContext, commits) {
+              const issue = issueContext.title;
+              const reviewCommentTime = issueContext.reviewCommentTime;
               const issueKeywords = issue.toLowerCase().split(/\s+/).filter(w => w.length > 3);
 
               // Require at least 50% of keywords to match (minimum 2) to avoid false positives
               const minMatches = Math.max(2, Math.ceil(issueKeywords.length * 0.5));
 
               return commits.some(commit => {
+                // Use committer date (not author date) to handle cherry-picks and rebases
+                const commitTime = new Date(commit.commit.committer.date);
+
+                // Only consider commits made AFTER the review comment
+                if (commitTime <= reviewCommentTime) {
+                  return false;
+                }
+
                 const message = commit.commit.message.toLowerCase();
                 const hasFix = /\b(fix|resolve|address|correct)\b/.test(message);
 
@@ -364,10 +375,11 @@ jobs:
               return { hasLoops: loops.length > 0, loops };
             }
 
-            const unresolvedIssues = issues.filter(issue => !isIssueResolved(issue, commits));
+            // Filter unresolved issues - check against commits made AFTER each review
             const unresolvedWithContext = issuesWithContext.filter(ctx =>
-              unresolvedIssues.includes(ctx.title)
+              !isIssueResolved(ctx, commits)
             );
+            const unresolvedIssues = [...new Set(unresolvedWithContext.map(ctx => ctx.title))];
             const loopDetection = detectLoops(codexComments, commits);
 
             // Format issues with context for Augment Agent
