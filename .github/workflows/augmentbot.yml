@@ -83,7 +83,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.issue.number,
-                body: '🤖 **AugmentBot activated!**\n\nI\'m now monitoring this PR for Codex reviews. I\'ll automatically:\n- Detect Codex review comments\n- Apply fixes using Augment Agent\n- Request re-reviews from Codex\n- Auto-merge when approved ✅'
+                body: '🤖 **AugmentBot activated!**\n\nI\'m now monitoring this PR for code reviews. I\'ll automatically:\n- Detect review comments from Codex or Bugbot\n- Apply fixes using Augment Agent\n- Request re-reviews\n- Auto-merge when approved ✅\n\n💡 **Supported reviewers:**\n- Codex (automatic reviews)\n- Bugbot (comment "bugbot run" to trigger)'
               });
               
               await github.rest.issues.addLabels({
@@ -155,7 +155,10 @@ jobs:
               per_page: 100
             });
 
-            const codexUsernames = (process.env.CODEX_USERNAMES || 'codex,codex-bot,codex-reviewer').split(',');
+            // Define all reviewer usernames
+            const codexUsernames = ['codex', 'codex-bot', 'codex-reviewer', 'chatgpt-codex-connector'];
+            const bugbotUsernames = ['bugbot', 'cursor-bugbot'];
+            const allReviewerUsernames = [...codexUsernames, ...bugbotUsernames];
 
             // Approval patterns - must indicate overall approval, not just contain emoji
             const approvalPatterns = [
@@ -166,7 +169,9 @@ jobs:
               /approved/i,
               /ready to merge/i,
               /✅.*approved/i,
-              /✅.*no major issues/i
+              /✅.*no major issues/i,
+              /no bugs found/i,
+              /all clear/i
             ];
 
             // Check for standalone thumbs up (not in "React with 👍" context)
@@ -178,30 +183,39 @@ jobs:
               return true;
             };
 
-            // Find all Codex comments (issue comments, review comments, and reviews)
-            const codexComments = [
+            // Helper function to determine reviewer type
+            const getReviewerType = (username) => {
+              const lowerUsername = username.toLowerCase();
+              if (codexUsernames.some(u => lowerUsername.includes(u.toLowerCase()))) return 'codex';
+              if (bugbotUsernames.some(u => lowerUsername.includes(u.toLowerCase()))) return 'bugbot';
+              return null;
+            };
+
+            // Find all reviewer comments (issue comments, review comments, and reviews)
+            // Tag each with reviewer type
+            const reviewerComments = [
               ...comments.filter(c =>
-                codexUsernames.some(u => c.user.login.toLowerCase().includes(u.toLowerCase()))
-              ),
+                allReviewerUsernames.some(u => c.user.login.toLowerCase().includes(u.toLowerCase()))
+              ).map(c => ({ ...c, reviewerType: getReviewerType(c.user.login) })),
               ...reviewComments.filter(r =>
-                codexUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
-              ),
+                allReviewerUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
+              ).map(r => ({ ...r, reviewerType: getReviewerType(r.user.login) })),
               ...reviews.filter(r =>
-                codexUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
-              )
+                allReviewerUsernames.some(u => r.user.login.toLowerCase().includes(u.toLowerCase()))
+              ).map(r => ({ ...r, reviewerType: getReviewerType(r.user.login) }))
             ].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-            if (codexComments.length === 0) {
+            if (reviewerComments.length === 0) {
               core.setOutput('has_unresolved', false);
               return { unresolvedIssues: [], count: 0 };
             }
 
-            // Get the most recent Codex comment
-            const latestCodexComment = codexComments[codexComments.length - 1];
-            core.info(`Latest Codex comment from: ${latestCodexComment.user.login}`);
-            core.info(`Latest Codex comment body preview: ${latestCodexComment.body.substring(0, 150)}...`);
+            // Get the most recent reviewer comment
+            const latestReviewerComment = reviewerComments[reviewerComments.length - 1];
+            core.info(`Latest reviewer comment from: ${latestReviewerComment.user.login} (${latestReviewerComment.reviewerType})`);
+            core.info(`Latest reviewer comment body preview: ${latestReviewerComment.body.substring(0, 150)}...`);
 
-            // Check for Codex error messages (out of credits, not configured, etc.)
+            // Check for reviewer error messages (out of credits, not configured, etc.)
             const errorPatterns = [
               /usage limits have been reached/i,
               /out of credits/i,
@@ -210,24 +224,27 @@ jobs:
               /check with the admins/i,
               /increase the limits/i,
               /codex is not enabled/i,
-              /codex has been disabled/i
+              /codex has been disabled/i,
+              /unable to review/i,
+              /cannot review/i,
+              /review failed/i
             ];
 
-            const isError = errorPatterns.some(pattern => pattern.test(latestCodexComment.body));
+            const isError = errorPatterns.some(pattern => pattern.test(latestReviewerComment.body));
 
             if (isError) {
-              core.warning('⚠️ Codex error message detected - skipping issue extraction');
+              core.warning(`⚠️ ${latestReviewerComment.reviewerType} error message detected - skipping issue extraction`);
               core.setOutput('has_unresolved', false);
               return { unresolvedIssues: [], count: 0, isError: true };
             }
 
-            // Check for approval in latest comment
-            const hasApprovalKeywords = approvalPatterns.some(p => p.test(latestCodexComment.body));
-            const hasThumbsUp = hasStandaloneThumbsUp(latestCodexComment.body);
+            // Check for approval from ANY reviewer
+            const hasApprovalKeywords = approvalPatterns.some(p => p.test(latestReviewerComment.body));
+            const hasThumbsUp = hasStandaloneThumbsUp(latestReviewerComment.body);
             const isApproved = hasApprovalKeywords || hasThumbsUp;
 
             if (isApproved) {
-              core.info('✅ Latest Codex comment is an approval');
+              core.info(`✅ Latest ${latestReviewerComment.reviewerType} comment is an approval`);
               // Don't return early - still need to check for unresolved issues from other reviewers
             }
 
@@ -279,12 +296,13 @@ jobs:
               return [...new Set(issues)];
             }
 
-            // Collect issues from ALL Codex comments with full context
+            // Collect issues from ALL reviewer comments with full context
+            // Track which reviewer reported each issue
             const allIssues = [];
             const issuesWithContext = [];
-            core.info(`Found ${codexComments.length} Codex comments to process`);
-            for (const comment of codexComments) {
-              core.info(`Processing comment ${comment.id} from ${comment.user.login}`);
+            core.info(`Found ${reviewerComments.length} reviewer comments to process`);
+            for (const comment of reviewerComments) {
+              core.info(`Processing comment ${comment.id} from ${comment.user.login} (${comment.reviewerType})`);
               core.info(`Comment body preview: ${comment.body.substring(0, 200)}...`);
 
               // Skip review bodies that don't contain P0/P1/P2 badges
@@ -298,17 +316,19 @@ jobs:
               }
 
               const extracted = extractIssues(comment.body);
-              core.info(`Extracted ${extracted.length} issues from comment ${comment.id}`);
+              core.info(`Extracted ${extracted.length} issues from ${comment.reviewerType} comment ${comment.id}`);
               if (extracted.length > 0) {
                 core.info(`Issues: ${JSON.stringify(extracted)}`);
-                // Store issues with full context (file path, line numbers, body, timestamp)
+                // Store issues with full context (file path, line numbers, body, reviewer type)
                 for (const issue of extracted) {
                   const contextEntry = {
                     title: issue,
                     file: comment.path || 'N/A',
                     line: comment.line || comment.original_line || 'N/A',
                     body: comment.body,
-                    reviewCommentTime: new Date(comment.created_at)
+                    reviewerType: comment.reviewerType,
+                    commentId: comment.id,
+                    createdAt: comment.created_at
                   };
                   issuesWithContext.push(contextEntry);
                 }
@@ -318,11 +338,10 @@ jobs:
             const issues = [...new Set(allIssues)]; // Remove duplicates
             core.info(`Total unique issues found: ${issues.length}`);
 
-            // Check if issue is resolved
-            // Takes an issue context object with reviewCommentTime
+            // Check if issue is resolved by commits made AFTER the review comment
             function isIssueResolved(issueContext, commits) {
               const issue = issueContext.title;
-              const reviewCommentTime = issueContext.reviewCommentTime;
+              const reviewCommentTime = new Date(issueContext.createdAt);
               const issueKeywords = issue.toLowerCase().split(/\s+/).filter(w => w.length > 3);
 
               // Require at least 50% of keywords to match (minimum 2) to avoid false positives
@@ -347,7 +366,7 @@ jobs:
               });
             }
 
-            // Detect loops
+            // Detect loops - track issues appearing multiple times across ALL reviewers
             function detectLoops(comments, commits) {
               const issueOccurrences = new Map();
 
@@ -360,7 +379,8 @@ jobs:
                   }
                   issueOccurrences.get(normalized).push({
                     commentId: comment.id,
-                    createdAt: comment.created_at
+                    createdAt: comment.created_at,
+                    reviewerType: comment.reviewerType
                   });
                 });
               });
@@ -380,11 +400,12 @@ jobs:
               !isIssueResolved(ctx, commits)
             );
             const unresolvedIssues = [...new Set(unresolvedWithContext.map(ctx => ctx.title))];
-            const loopDetection = detectLoops(codexComments, commits);
+            const loopDetection = detectLoops(reviewerComments, commits);
 
             // Format issues with context for Augment Agent
+            // Group by reviewer type for better tracking
             const formattedIssues = unresolvedWithContext.map(ctx => {
-              let formatted = `**${ctx.title}**`;
+              let formatted = `**${ctx.title}** [${ctx.reviewerType}]`;
               if (ctx.file !== 'N/A') {
                 formatted += `\n  File: ${ctx.file}`;
                 if (ctx.line !== 'N/A') {
@@ -402,6 +423,9 @@ jobs:
               return formatted;
             }).join('\n\n');
 
+            // Track which reviewers have reported issues
+            const reviewersWithIssues = [...new Set(unresolvedWithContext.map(ctx => ctx.reviewerType))];
+
             core.setOutput('has_unresolved', unresolvedIssues.length > 0);
             core.setOutput('unresolved_count', unresolvedIssues.length);
             // Add bullet point to ALL issues, not just after the first one
@@ -410,12 +434,13 @@ jobs:
             core.setOutput('issues_with_context', Buffer.from(formattedIssues).toString('base64'));
             core.setOutput('has_loops', loopDetection.hasLoops);
             core.setOutput('loop_details', JSON.stringify(loopDetection.loops));
+            core.setOutput('reviewers_with_issues', reviewersWithIssues.join(','));
 
-            return { unresolvedIssues, count: unresolvedIssues.length, isApproved, loops: loopDetection };
+            return { unresolvedIssues, count: unresolvedIssues.length, isApproved, loops: loopDetection, reviewersWithIssues };
         env:
-          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector
-      
-      - name: Detect Codex comment
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector,bugbot,cursor-bugbot
+
+      - name: Detect reviewer comment
         id: codex
         if: steps.monitoring.outputs.enabled == 'true'
         uses: actions/github-script@v7
@@ -424,31 +449,58 @@ jobs:
             const comment = context.payload.comment;
             const review = context.payload.review;
 
-            // Check if this is a Codex comment
-            const codexUsernames = process.env.CODEX_USERNAMES.split(',');
-            let isCodex = false;
+            // Define reviewer patterns
+            const codexUsernames = ['codex', 'codex-bot', 'codex-reviewer', 'chatgpt-codex-connector'];
+            const bugbotUsernames = ['bugbot', 'cursor-bugbot'];
+            const allReviewerUsernames = [...codexUsernames, ...bugbotUsernames];
+
+            let isReviewer = false;
+            let reviewerType = ''; // 'codex' or 'bugbot'
             let commentBody = '';
             let reviewId = null;
+            let isBugbotTrigger = false;
 
             if (comment) {
-              isCodex = codexUsernames.some(username =>
+              // Check for manual Bugbot trigger
+              if (/^bugbot\s+run$/i.test(comment.body.trim())) {
+                isBugbotTrigger = true;
+                core.info('🤖 Bugbot manual trigger detected');
+              }
+
+              // Check if comment is from a reviewer bot
+              const isFromCodex = codexUsernames.some(username =>
                 comment.user.login.toLowerCase().includes(username.toLowerCase())
               );
+              const isFromBugbot = bugbotUsernames.some(username =>
+                comment.user.login.toLowerCase().includes(username.toLowerCase())
+              );
+
+              isReviewer = isFromCodex || isFromBugbot;
+              reviewerType = isFromCodex ? 'codex' : (isFromBugbot ? 'bugbot' : '');
               commentBody = comment.body;
             } else if (review) {
-              isCodex = codexUsernames.some(username =>
+              const isFromCodex = codexUsernames.some(username =>
                 review.user.login.toLowerCase().includes(username.toLowerCase())
               );
+              const isFromBugbot = bugbotUsernames.some(username =>
+                review.user.login.toLowerCase().includes(username.toLowerCase())
+              );
+
+              isReviewer = isFromCodex || isFromBugbot;
+              reviewerType = isFromCodex ? 'codex' : (isFromBugbot ? 'bugbot' : '');
               commentBody = review.body;
               reviewId = review.id;
             }
 
-            core.setOutput('is_codex', isCodex);
+            core.setOutput('is_codex', isReviewer); // Keep for backward compatibility
+            core.setOutput('is_reviewer', isReviewer);
+            core.setOutput('reviewer_type', reviewerType);
+            core.setOutput('is_bugbot_trigger', isBugbotTrigger);
             // Base64 encode comment body to prevent JavaScript syntax errors from backticks
             core.setOutput('comment_body', Buffer.from(commentBody).toString('base64'));
             core.setOutput('review_id', reviewId || '');
 
-            // Check for Codex error messages (out of credits, not configured, etc.)
+            // Check for reviewer error messages (out of credits, not configured, etc.)
             const errorPatterns = [
               /usage limits have been reached/i,
               /out of credits/i,
@@ -457,28 +509,37 @@ jobs:
               /check with the admins/i,
               /increase the limits/i,
               /codex is not enabled/i,
-              /codex has been disabled/i
+              /codex has been disabled/i,
+              /unable to review/i,
+              /cannot review/i,
+              /review failed/i
             ];
 
             const isError = errorPatterns.some(pattern => pattern.test(commentBody));
 
             if (isError) {
-              core.warning('⚠️ Codex error message detected - skipping workflow');
-              core.setOutput('is_codex', false); // Treat as non-Codex to skip processing
-              return { isCodex: false, isApproval: false, isError: true, commentBody };
+              core.warning(`⚠️ ${reviewerType || 'Reviewer'} error message detected`);
+              core.setOutput('is_error', true);
+              core.setOutput('error_reviewer', reviewerType);
+              // Don't skip processing - we'll trigger fallback instead
+              return { isReviewer, isApproval: false, isError: true, reviewerType, commentBody };
             }
 
             // Check for approval - need to check both review body AND line-level comments
             let isApproval = false;
 
-            // First check review body for approval patterns
+            // Approval patterns for both Codex and Bugbot
             const approvalPatterns = [
               /no major issues/i,
               /didn't find any major issues/i,
               /looks good/i,
               /lgtm/i,
               /approved/i,
-              /ready to merge/i
+              /ready to merge/i,
+              /no bugs found/i,
+              /all clear/i,
+              /✅.*approved/i,
+              /✅.*no major issues/i
             ];
 
             if (approvalPatterns.some(pattern => pattern.test(commentBody))) {
@@ -509,12 +570,68 @@ jobs:
 
             core.setOutput('is_approval', isApproval);
 
-            return { isCodex, isApproval, commentBody, reviewId };
+            return { isReviewer, isApproval, commentBody, reviewId, reviewerType };
         env:
-          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector
+          CODEX_USERNAMES: codex,codex-bot,codex-reviewer,chatgpt-codex-connector,bugbot,cursor-bugbot
 
-      - name: Add rocket reaction to Codex comment
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval != 'true'
+      - name: Trigger fallback reviewer
+        if: steps.codex.outputs.is_error == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const errorReviewer = '${{ steps.codex.outputs.error_reviewer }}';
+            const prNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+
+            if (!prNumber) return;
+
+            // Determine which reviewer to trigger as fallback
+            let fallbackTrigger = '';
+            let fallbackName = '';
+
+            if (errorReviewer === 'codex') {
+              fallbackTrigger = 'bugbot run';
+              fallbackName = 'Bugbot';
+            } else if (errorReviewer === 'bugbot') {
+              fallbackTrigger = '@codex please review';
+              fallbackName = 'Codex';
+            }
+
+            if (fallbackTrigger) {
+              core.info(`⚠️ ${errorReviewer} failed - triggering ${fallbackName} as fallback`);
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `⚠️ **${errorReviewer} encountered an error**\n\nAutomatically triggering ${fallbackName} as fallback reviewer...\n\n${fallbackTrigger}`
+              });
+            }
+
+      - name: Handle Bugbot manual trigger
+        if: steps.codex.outputs.is_bugbot_trigger == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+            if (!prNumber) return;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: '🤖 **Bugbot triggered!**\n\nStarting code review...'
+            });
+
+            // Add label to track Bugbot review
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              labels: ['augmentbot:bugbot-review']
+            });
+
+      - name: Add rocket reaction to reviewer comment
+        if: steps.codex.outputs.is_reviewer == 'true' && steps.codex.outputs.is_approval != 'true' && steps.codex.outputs.is_error != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -621,6 +738,8 @@ jobs:
             const hasLoops = '${{ steps.issues.outputs.has_loops }}' === 'true';
             const historicalCount = parseInt('${{ steps.historical.outputs.unresolved_count }}') || 0;
             const issuesList = process.env.ISSUES_LIST || '';
+            const reviewersWithIssues = '${{ steps.historical.outputs.reviewers_with_issues }}';
+            const currentReviewerType = '${{ steps.codex.outputs.reviewer_type }}';
 
             let statusMessage = '🤖 **AugmentBot Status**\n\n';
 
@@ -630,16 +749,21 @@ jobs:
               statusMessage += `Issues stuck in loop: ${historicalCount}`;
             } else if (issueCount > 0) {
               statusMessage += `✅ **Activated and working!**\n\n`;
-              statusMessage += `Found **${issueCount} issue(s)** from Codex review:\n\n`;
+              const reviewerLabel = currentReviewerType ? `${currentReviewerType} ` : '';
+              statusMessage += `Found **${issueCount} issue(s)** from ${reviewerLabel}review:\n\n`;
               statusMessage += issuesList + '\n\n';
               statusMessage += '🔧 Starting to apply fixes now...';
             } else if (historicalCount > 0) {
               statusMessage += `📋 Found **${historicalCount} unresolved historical issue(s)**\n\n`;
-              statusMessage += 'These issues were identified in previous Codex reviews but not yet resolved.\n\n';
+              if (reviewersWithIssues) {
+                statusMessage += `From reviewers: ${reviewersWithIssues}\n\n`;
+              }
+              statusMessage += 'These issues were identified in previous reviews but not yet resolved.\n\n';
               statusMessage += '🔧 Starting to apply fixes now...';
             } else {
               statusMessage += '✅ **Monitoring active**\n\n';
-              statusMessage += 'No unresolved Codex issues found. Waiting for Codex review...';
+              statusMessage += 'No unresolved issues found. Waiting for code review...\n\n';
+              statusMessage += '💡 Supported reviewers: Codex (automatic), Bugbot (comment "bugbot run")';
             }
 
             await github.rest.issues.createComment({
@@ -724,19 +848,34 @@ jobs:
 
 
 
-      - name: Request re-review from Codex
+      - name: Request re-review
         if: steps.issues.outputs.count > 0 && steps.issues.outputs.has_loops != 'true'
         uses: actions/github-script@v7
         with:
           script: |
             // Sanitize issues text to prevent shell escaping errors
             const issuesText = `${{ steps.issues.outputs.issues }}`.replace(/[`'"]/g, '');
+            const reviewersWithIssues = '${{ steps.historical.outputs.reviewers_with_issues }}';
+
+            // Determine which reviewers to ping for re-review
+            let reviewerMentions = '';
+            if (reviewersWithIssues.includes('codex')) {
+              reviewerMentions += '@codex ';
+            }
+            if (reviewersWithIssues.includes('bugbot')) {
+              reviewerMentions += 'bugbot run ';
+            }
+
+            // Default to codex if no specific reviewer identified
+            if (!reviewerMentions) {
+              reviewerMentions = '@codex ';
+            }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ steps.pr.outputs.number }},
-              body: `🔄 **Fixes applied!**\n\nI've addressed the issues identified in the review. @codex please re-review when ready.\n\n**Issues fixed:**\n${issuesText}`
+              body: `🔄 **Fixes applied!**\n\nI've addressed the issues identified in the review. ${reviewerMentions}please re-review when ready.\n\n**Issues fixed:**\n${issuesText}`
             });
 
             // Update label
@@ -748,16 +887,33 @@ jobs:
             });
 
       - name: Auto-merge PR
-        if: steps.codex.outputs.is_codex == 'true' && steps.codex.outputs.is_approval == 'true'
+        if: steps.codex.outputs.is_reviewer == 'true' && steps.codex.outputs.is_approval == 'true'
         uses: actions/github-script@v7
         with:
           script: |
+            const reviewerType = '${{ steps.codex.outputs.reviewer_type }}';
+            const prNumber = ${{ steps.pr.outputs.number }};
+
+            // Check if there are any unresolved issues from ANY reviewer
+            const hasUnresolvedIssues = '${{ steps.historical.outputs.has_unresolved }}' === 'true';
+
+            if (hasUnresolvedIssues) {
+              core.info(`⚠️ Cannot auto-merge: ${reviewerType} approved but there are still unresolved issues from other reviewers`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `✅ **${reviewerType} approved!**\n\n⚠️ However, there are still unresolved issues from other reviewers. Auto-merge will proceed once all issues are resolved.`
+              });
+              return;
+            }
+
             // Post approval message
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.pr.outputs.number }},
-              body: '✅ **Codex approved!**\n\nAuto-merging PR now...'
+              issue_number: prNumber,
+              body: `✅ **${reviewerType} approved!**\n\nAll issues resolved. Auto-merging PR now...`
             });
 
             // Merge the PR
@@ -765,32 +921,39 @@ jobs:
               await github.rest.pulls.merge({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: ${{ steps.pr.outputs.number }},
+                pull_number: prNumber,
                 merge_method: 'squash',
-                commit_title: 'Merge PR #${{ steps.pr.outputs.number }} - Codex approved',
-                commit_message: 'Automated merge by AugmentBot after Codex approval'
+                commit_title: `Merge PR #${prNumber} - ${reviewerType} approved`,
+                commit_message: `Automated merge by AugmentBot after ${reviewerType} approval`
               });
 
               // Remove monitoring labels
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: ${{ steps.pr.outputs.number }},
+                issue_number: prNumber,
                 name: 'augmentbot:monitoring'
               }).catch(() => {});
 
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: ${{ steps.pr.outputs.number }},
+                issue_number: prNumber,
                 name: 'augmentbot:waiting-review'
+              }).catch(() => {});
+
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                name: 'augmentbot:bugbot-review'
               }).catch(() => {});
 
             } catch (error) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: ${{ steps.pr.outputs.number }},
+                issue_number: prNumber,
                 body: '⚠️ **Auto-merge failed**\n\nError: ' + error.message + '\n\nPlease merge manually.'
               });
             }
